@@ -12,17 +12,33 @@ export const getCurrentUser = async (dispatch) => {
     }
 }
 
-export const generateNotes = async (payload) => {
+// export const generateNotes = async (payload) => {
+//     try {
+//         const result = await axios.post(serverUrl+ "/api/notes/generate-notes" , payload , {withCredentials:true})
+//         console.log(result.data)
+//         return result.data
+
+//     } catch (error) {
+//         console.log(error)
+//     }
+// }
+   export const generateNotes = async (payload) => {
     try {
-        const result = await axios.post(serverUrl+ "/api/notes/generate-notes" , payload , {withCredentials:true})
-        console.log(result.data)
+        const result = await axios.post(
+            serverUrl + "/api/notes/generate-notes",
+            payload,
+            { withCredentials: true }
+        )
+
         return result.data
 
     } catch (error) {
-        console.log(error)
+        console.log("API ERROR:", error.response?.data || error.message)
+
+        // 👇 IMPORTANT: throw error instead of returning undefined
+        throw error
     }
 }
-
 export const downloadPdf = async (result) => {
     try {
         const response = await axios.post(serverUrl+ "/api/pdf/generate-pdf" , {result} , {
