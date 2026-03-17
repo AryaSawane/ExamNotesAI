@@ -8,7 +8,7 @@ import { getMyNotes, getSingleNotes } from "../controllers/notes.controller.js"
 const notesRouter = express.Router()
 
 
-notesRouter.post("/generate-notes",isAuth,generateNotes)
+notesRouter.post("/generate-notes",generateNotes)
 notesRouter.get("/getnotes", isAuth,getMyNotes)
 notesRouter.get("/:id" , isAuth , getSingleNotes)
 
