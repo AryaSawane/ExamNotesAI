@@ -1,0 +1,1035 @@
+# Project: Per-User, Per-Hour Active Directory Behavioral Baseline and Risk Scoring
+
+You are a senior cybersecurity data scientist, Windows security-log analyst, and machine-learning engineer.
+
+I have approximately 10 days of Windows Active Directory telemetry consisting primarily of:
+
+* Windows Security Event Logs
+* Sysmon Event Logs
+
+The first 7 days are guaranteed to contain ONLY normal/benign activity.
+
+Days 8–10 will be used as the testing period. These days may contain anomalous or malicious activity.
+
+The goal is to build a behavioral baseline for every user and every hour of the day and then calculate a risk/anomaly score for every 10-minute test window.
+
+The entire initial implementation should be developed in a **Jupyter Notebook**, with the notebook organized into clearly separated sections.
+
+---
+
+# 1. Core Objective
+
+Build a behavioral profiling system with this structure:
+
+```text
+User
+ └── Hour of Day
+      └── 10-minute behavioral windows
+           └── Feature vector
+```
+
+The baseline must be:
+
+```text
+USER-SPECIFIC + HOUR-SPECIFIC
+```
+
+It must NOT depend on the day of the week.
+
+For example:
+
+```text
+Alice + Hour 09
+```
+
+should represent Alice's general normal behavior during 09:00–10:00 across all training days.
+
+Monday 09:00, Tuesday 09:00, Wednesday 09:00, etc. all contribute to the same:
+
+```text
+Alice + 09:00–10:00
+```
+
+baseline.
+
+---
+
+# 2. Training and Testing Period
+
+The dataset contains 10 days.
+
+Use:
+
+```text
+Days 1–7 = Training / Baseline
+Days 8–10 = Testing
+```
+
+The first 7 days are known to contain only normal activity.
+
+Do NOT use Days 8–10 to construct the initial baseline.
+
+Avoid all forms of data leakage.
+
+---
+
+# 3. 10-Minute Windowing
+
+Divide the entire timeline into fixed 10-minute windows.
+
+For every user, every hour contains exactly six windows:
+
+```text
+09:00–09:10
+09:10–09:20
+09:20–09:30
+09:30–09:40
+09:40–09:50
+09:50–10:00
+```
+
+For 7 training days:
+
+```text
+6 windows/hour/day × 7 days = 42 observations per user-hour
+```
+
+Therefore:
+
+```text
+User Alice + Hour 09
+
+Day 1 → 6 observations
+Day 2 → 6 observations
+Day 3 → 6 observations
+Day 4 → 6 observations
+Day 5 → 6 observations
+Day 6 → 6 observations
+Day 7 → 6 observations
+
+Total = 42 ten-minute observations
+```
+
+---
+
+# 4. IMPORTANT: Do Not Remove Empty Windows
+
+Every user must have all 24 hours represented.
+
+Every hour must contain all six 10-minute windows.
+
+If a user has no events in a 10-minute window:
+
+```text
+09:10–09:20 → 0 events
+```
+
+DO NOT remove this window.
+
+Instead create a feature vector containing zeros/default values.
+
+For example:
+
+```text
+process_count = 0
+network_count = 0
+failed_login_count = 0
+dns_count = 0
+unique_process_count = 0
+...
+```
+
+Similarly, if a user has no activity during an entire hour, that hour must still exist in the dataset with six zero/default feature vectors.
+
+Do NOT exclude inactive hours from the baseline.
+
+This is an intentional design decision because inactivity itself is part of the user's behavioral pattern.
+
+---
+
+# 5. Expected Baseline Structure
+
+For every user, create 24 hourly baselines:
+
+```text
+User A
+ ├── Hour 00
+ ├── Hour 01
+ ├── Hour 02
+ ...
+ ├── Hour 22
+ └── Hour 23
+```
+
+Each hourly baseline is learned from up to:
+
+```text
+42 ten-minute feature vectors
+```
+
+from Days 1–7.
+
+The final baseline should therefore conceptually look like:
+
+```text
+user_id
+hour
+    ↓
+42 normal observations
+    ↓
+statistical/behavioral representation
+```
+
+---
+
+# 6. User Identification
+
+The primary user-identification source will be Windows Security Event ID 4624.
+
+Use fields such as:
+
+* TargetUserName
+* TargetDomainName
+* SubjectUserName
+* SubjectDomainName
+* LogonType
+* LogonId
+* TargetLogonId
+* IpAddress
+
+First, extract all Security Event 4624 events and create a mapping of **Username + LogonId + Computer + Timestamp**. Then map Sysmon Event 1 to the corresponding 4624 using **LogonId, Computer, and time correlation**. Once Event 1 is mapped, use its **ProcessGuid** to associate all related Sysmon events with that user. For remaining Security events, identify the user using event-specific fields such as **SubjectUserName, TargetUserName, UserName, LogonId, etc.** Finally, create one unified user-attributed event dataset, which will be divided into **10-minute windows** for feature extraction and baseline creation.
+
+
+
+# 7. Critical Requirement: Security-to-Sysmon User Attribution
+
+Do NOT simply assume that every Sysmon event belongs to the nearest Security 4624 event.
+
+Build a dedicated user-attribution process.
+
+First inspect which identity/session fields are available in Sysmon and Security logs.
+
+Potential correlation fields include:
+
+```text
+User
+UserName
+AccountName
+LogonId
+LogonGuid
+ProcessId
+ParentProcessId
+Computer
+SourceIp
+Timestamp
+```
+
+Use direct user fields when reliably available.
+
+For Sysmon events without an explicit user, investigate whether they can be safely attributed using:
+
+```text
+LogonId / LogonGuid
++
+Computer
++
+Timestamp
++
+Process/session information
+```
+
+The correlation logic must be evidence-based.
+
+Do NOT fabricate user attribution.
+
+Create a separate notebook section:
+
+```text
+USER ATTRIBUTION / EVENT CORRELATION
+```
+
+and document:
+
+1. Which fields are used.
+2. Which Event IDs contain user information.
+3. Which Event IDs require correlation.
+4. Which Event IDs cannot be confidently attributed.
+5. How ambiguous events are handled.
+
+If an event cannot be confidently attributed to a user, do not force it into a user's baseline.
+
+---
+
+# 8. Event Types
+
+Initially focus primarily on the available Security and Sysmon Event IDs in the dataset.
+
+Likely Security events may include:
+
+```text
+4624
+4625
+4672
+4688
+4720
+4728
+4732
+4740
+4768
+4769
+5140
+5145
+```
+
+Likely Sysmon events may include:
+
+```text
+1
+3
+7
+8
+10
+11
+12
+13
+14
+22
+```
+
+BUT:
+
+Do not assume these Event IDs exist.
+
+First inspect the actual dataset and report:
+
+```text
+Event ID
+Count
+Available fields
+User attribution availability
+Potential security meaning
+```
+
+Then design the feature set based on the events that actually exist.
+
+The code should be easy to modify to add more Event IDs later.
+
+---
+
+# 9. Feature Engineering
+
+Create features at the 10-minute window level.
+
+The first step must be exploratory data analysis to determine which features are actually possible from the available fields.
+
+Potential numerical features include:
+
+## Authentication
+
+```text
+successful_logon_count
+failed_logon_count
+unique_source_ip_count
+unique_workstation_count
+interactive_logon_count
+network_logon_count
+remote_logon_count
+authentication_failure_ratio
+```
+
+## Process Behavior
+
+```text
+process_creation_count
+unique_process_count
+unique_parent_process_count
+powershell_count
+cmd_count
+script_interpreter_count
+unique_process_parent_pairs
+```
+
+## Network Behavior
+
+```text
+network_connection_count
+unique_destination_ip_count
+unique_destination_port_count
+unique_destination_count
+```
+
+## DNS
+
+```text
+dns_query_count
+unique_domain_count
+```
+
+## File Activity
+
+Where supported:
+
+```text
+file_creation_count
+executable_creation_count
+script_creation_count
+archive_creation_count
+```
+
+## Registry Activity
+
+Where supported:
+
+```text
+registry_event_count
+registry_modification_count
+unique_registry_path_count
+```
+
+## Privilege/Security Activity
+
+Where supported:
+
+```text
+privileged_event_count
+account_change_count
+group_change_count
+service_creation_count
+security_policy_change_count
+```
+
+The final feature set MUST depend on the actual dataset.
+
+Do not create meaningless features for Event IDs that do not exist.
+
+---
+
+# 10. Behavioral Features Beyond Simple Counts
+
+Do not rely only on event counts.
+
+The baseline should also learn behavioral characteristics such as:
+
+### Process identity
+
+Which executables does the user normally run?
+
+### Parent-child relationships
+
+Which process relationships are normal?
+
+For example:
+
+```text
+outlook.exe → chrome.exe
+explorer.exe → powershell.exe
+```
+
+### Network destinations
+
+Which IPs/domains/ports does the user normally communicate with?
+
+### Authentication sources
+
+From which workstations/IPs does the user normally authenticate?
+
+### Rare events
+
+Events that are extremely uncommon during the 7-day baseline should receive higher anomaly weight.
+
+### Novel behavior
+
+A process, destination, parent-child relationship, or authentication source never observed during training should be treated as potentially anomalous.
+
+---
+
+# 11. Baseline Representation
+
+Do NOT define the baseline as only:
+
+```text
+mean(feature)
+```
+
+For numerical features, investigate robust statistical representations such as:
+
+```text
+mean
+median
+standard deviation
+MAD
+Q1
+Q3
+P5
+P95
+```
+
+For count-based features, consider:
+
+```text
+median + MAD
+```
+
+or percentile-based ranges.
+
+For categorical/set features, maintain:
+
+```text
+observed values
+frequency
+relative frequency
+novelty
+rarity
+```
+
+The objective is to represent:
+
+```text
+What does this user normally do during this hour?
+```
+
+rather than simply:
+
+```text
+How many events does this user generate?
+```
+
+---
+
+# 12. Model Design
+
+This is an anomaly-detection problem.
+
+The training data contains only normal behavior.
+
+Investigate and compare appropriate methods such as:
+
+### Statistical baseline
+
+```text
+Robust Z-score
+MAD
+Percentile deviation
+```
+
+### Machine-learning anomaly detection
+
+Consider:
+
+```text
+Isolation Forest
+One-Class SVM
+Local Outlier Factor
+```
+
+However, do NOT automatically choose one.
+
+First build a strong statistical baseline.
+
+Then evaluate whether a machine-learning model provides additional value.
+
+The final architecture may be a hybrid:
+
+```text
+Statistical anomaly score
++
+Behavioral novelty score
++
+ML anomaly score
+        ↓
+Final risk score
+```
+
+The selected method must be justified based on:
+
+* only 42 baseline observations per user-hour
+* high-dimensional features
+* many zero values
+* categorical behavior
+* noisy Windows telemetry
+* user-specific behavior
+* explainability requirements
+
+---
+
+# 13. Risk Score
+
+The final output for every 10-minute testing window should be a continuous score.
+
+Example:
+
+```text
+0.00 → completely consistent with baseline
+1.00 → highly anomalous
+```
+
+The score should represent behavioral deviation/risk.
+
+Do NOT automatically call:
+
+```text
+risk = 0.95
+```
+
+"95% probability of maliciousness."
+
+Unless a properly calibrated probabilistic model is developed and validated.
+
+Instead clearly distinguish:
+
+```text
+ANOMALY SCORE
+```
+
+from:
+
+```text
+MALICIOUSNESS PROBABILITY
+```
+
+Initially the preferred output is:
+
+```text
+risk_score
+anomaly_score
+risk_level
+```
+
+For example:
+
+```text
+User: alice
+Date: Day 8
+Window: 09:10–09:20
+
+Anomaly Score: 0.91
+Risk Level: HIGH
+```
+
+---
+
+# 14. Explainability
+
+For every high-risk window, identify why the score is high.
+
+Example:
+
+```text
+User: alice
+Hour: 09
+Window: 09:10–09:20
+
+Risk Score: 0.91
+Risk Level: HIGH
+
+Reasons:
+
+1. Process creation count is significantly above Alice's normal 09:00 baseline.
+2. powershell.exe was not observed during the training baseline.
+3. Destination IP X.X.X.X is new for this user.
+4. Failed authentication count is significantly higher than normal.
+5. A new process-parent relationship was observed.
+```
+
+The system should rank the strongest contributing factors.
+
+---
+
+# 15. Important Security Principle
+
+An anomaly is NOT automatically malicious.
+
+The system should answer:
+
+> "How different is this activity from the user's normal behavior?"
+
+It should NOT claim:
+
+> "This activity is definitely malicious."
+
+unless there is additional detection/correlation evidence.
+
+Therefore use terminology such as:
+
+```text
+Normal
+Low Risk
+Medium Risk
+High Risk
+Critical Risk
+```
+
+rather than directly:
+
+```text
+Benign
+Malicious
+```
+
+unless ground-truth labels are available.
+
+---
+
+# 16. Jupyter Notebook Structure
+
+Implement the project initially as a Jupyter Notebook.
+
+Organize it into these sections:
+
+```text
+01. Project Configuration
+02. Imports
+03. Load Dataset
+04. Dataset Profiling
+05. Event ID Analysis
+06. Timestamp Normalization
+07. User Identification
+08. Security/Sysmon Correlation
+09. Data Cleaning
+10. 10-Minute Window Generation
+11. Feature Engineering
+12. Feature Validation
+13. Training Data Construction
+14. User × Hour Baseline Creation
+15. Baseline Visualization
+16. Test Data Feature Extraction
+17. Anomaly Scoring
+18. Risk Scoring
+19. Explainability
+20. Evaluation
+21. Visualization
+22. Results
+23. Save Baseline / Model
+```
+
+Use functions/classes inside the notebook instead of writing everything as one large procedural block.
+
+The notebook should be readable and reproducible.
+
+---
+
+# 17. Required Data Tables
+
+Create a raw event-level normalized dataframe similar to:
+
+```text
+timestamp
+event_id
+computer
+user
+logon_id
+process_id
+parent_process_id
+source_ip
+destination_ip
+destination_port
+process_name
+parent_process_name
+domain
+...
+```
+
+also add Visualization
+
+Create useful visualizations such as:
+
+user activity by hour
+baseline distributions
+feature distributions
+anomaly scores over time
+anomaly score vs baseline
+top anomalous users
+top anomalous windows
+feature-level reasons for anomalies
+normal vs anomalous behavior
+
+Then create a 10-minute feature dataframe:
+
+```text
+user
+date
+hour
+window_start
+window_end
+process_count
+unique_process_count
+failed_logon_count
+successful_logon_count
+network_count
+unique_destination_count
+dns_count
+...
+```
+
+Then create the baseline representation:
+
+```text
+user
+hour
+feature
+median
+mad
+p05
+p95
+...
+```
+
+plus appropriate structures for categorical behavior.
+
+---
+
+# 18. Baseline Example
+
+For:
+
+```text
+Alice + Hour 09
+```
+
+the baseline should contain the 42 observations:
+
+```text
+Day 1 09:00
+Day 1 09:10
+...
+Day 1 09:50
+
+Day 2 09:00
+...
+Day 7 09:50
+```
+
+Then calculate the normal behavioral representation.
+
+During testing:
+
+```text
+Day 8 09:10–09:20
+```
+
+must be transformed using exactly the same feature-engineering pipeline and compared against:
+
+```text
+Alice + Hour 09 baseline
+```
+
+NOT:
+
+```text
+global baseline
+Alice + all hours
+Alice + Day 8
+```
+
+---
+
+# 19. Evaluation
+
+Because Days 1–7 are known normal and Days 8–10 may contain malicious/anomalous activity, evaluate the system on Days 8–10.
+
+If ground-truth labels for malicious activity are available, calculate:
+
+```text
+Precision
+Recall
+F1
+PR-AUC
+ROC-AUC
+False Positive Rate
+False Positives per User/Day
+Detection Rate
+Detection Latency
+```
+
+For a SOC/security use case, pay particular attention to:
+
+```text
+False positives per user/day
+```
+
+because an algorithm generating hundreds of alerts is not useful even if its theoretical recall is high.
+
+If no ground-truth labels exist, do not manufacture accuracy metrics.
+
+Instead provide:
+
+```text
+anomaly score distribution
+top anomalous windows
+top anomalous users
+feature-level explanations
+alert volume
+score stability
+```
+
+---
+
+# 20. Avoiding False Positives
+
+The system should consider that unusual does not necessarily mean malicious.
+
+Examples:
+
+```text
+User works overtime
+User changes workstation
+User installs approved software
+User performs administrative activity
+User connects to a new legitimate server
+```
+
+The baseline should therefore use robust statistics and behavioral context.
+
+Avoid setting arbitrary thresholds without analyzing the training distribution.
+
+---
+
+# 21. Initial Implementation Strategy
+
+Do NOT immediately build the final ML model.
+
+Follow this sequence:
+
+### Phase 1 — Understand the data
+
+Inspect:
+
+```text
+files
+columns
+Event IDs
+timestamps
+users
+computers
+logon IDs
+Sysmon fields
+```
+
+Produce summary statistics.
+
+### Phase 2 — Build user attribution
+
+Determine how Security and Sysmon events can be associated with users.
+
+Document confidence/limitations.
+
+### Phase 3 — Build 10-minute windows
+
+Generate exactly six windows per hour.
+
+Keep empty windows.
+
+### Phase 4 — Feature engineering
+
+Build and validate the 10-minute feature vectors.
+
+### Phase 5 — Baseline
+
+Construct:
+
+```text
+user × hour
+```
+
+baselines from Days 1–7.
+
+### Phase 6 — Statistical anomaly detection
+
+Implement a robust statistical approach first.
+
+### Phase 7 — ML comparison
+
+Experiment with suitable unsupervised anomaly-detection algorithms.
+
+### Phase 8 — Risk scoring
+
+Combine the strongest signals into a normalized risk score.
+
+### Phase 9 — Explainability
+
+Generate human-readable reasons for high-risk windows.
+
+### Phase 10 — Evaluation
+
+Run Days 8–10 through the complete pipeline.
+
+---
+
+# 22. Very Important: Do Not Hide Assumptions
+
+Whenever the implementation encounters ambiguity, explicitly report it.
+
+For example:
+
+```text
+WARNING:
+Sysmon Event ID 3 does not contain a reliable user identifier in this dataset.
+Therefore these events cannot currently be confidently attributed to individual users.
+```
+
+Do NOT silently make assumptions.
+
+Similarly report:
+
+```text
+Users with insufficient baseline data
+Event IDs that cannot be attributed
+Missing fields
+Unexpected timestamps
+Duplicate events
+Malformed records
+```
+
+---
+
+# 23. First Task
+
+Before implementing any ML model, inspect the provided dataset.
+
+Your FIRST response/task should be a detailed dataset analysis containing:
+
+1. Number of files.
+2. Number of events.
+3. Date/time range.
+4. Event ID distribution.
+5. Available columns/fields.
+6. Unique users.
+7. Security vs Sysmon event distribution.
+8. Missing-value analysis.
+9. Available user-identification fields.
+10. Available logon/session correlation fields.
+11. Which events can be directly mapped to users.
+12. Which events require correlation.
+13. Which events cannot safely be mapped to users.
+14. Proposed 10-minute feature schema.
+15. Potential data-quality problems.
+
+Do not build the final anomaly model until this analysis is complete.
+
+After the dataset analysis, propose the architecture and feature schema before implementing it.
+
+The ultimate goal is:
+
+```text
+Windows Security + Sysmon Logs
+             ↓
+      User Attribution
+             ↓
+      10-Minute Windows
+             ↓
+      Behavioral Features
+             ↓
+       Days 1–7 Normal
+             ↓
+    User × Hour Baselines
+             ↓
+       Days 8–10 Testing
+             ↓
+      Baseline Comparison
+             ↓
+       Anomaly / Risk Score
+             ↓
+    Explainable Security Alert
+```
+
+The final system must be designed so that additional Security/Sysmon Event IDs and additional features can be added later without rewriting the entire pipeline.
