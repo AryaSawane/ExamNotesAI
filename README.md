@@ -7,3 +7,5 @@ To know what 'normal' looks like, I build a per-user, per-hour-of-day baseline u
 For actually detecting anomalies, I moved past a simple z-score, because with sparse binary security signals, z-scores badly under-score things like 'this LSASS access has literally never happened before.' So I built a composite risk score that combines rarity — how statistically surprising this is given the user's history — with magnitude — how extreme the value is compared to what's normal — and severity weighting, since something like LSASS access or encoded PowerShell should count heavily regardless of how rare it is.
 
 Finally, I tested it by injecting a simulated attack — encoded PowerShell from Word, talking to a C2 IP, touching LSASS, resolving a DGA-style domain — and scoring it against the real baseline. It scored roughly 10x higher than a normal busy window, and I've got a working test-file cell where I can drop in any new suspicious log file and score it the same way."
+
+https://drive.google.com/file/d/1dEdUntS_RWdB_7GN6zu_XZVmgf9Ls9C4/view?usp=sharing
