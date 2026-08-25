@@ -1,3 +1,27 @@
+# ---- list every alert at the operating threshold, with ground-truth verdict ---------
+alerts = ACTIVE[ACTIVE.risk >= ALERT_THRESHOLD].copy().sort_values("win").reset_index(drop=True)
+
+alerts["alert_datetime"] = alerts.win.dt.strftime("%Y-%m-%d %H:%M")
+alerts["window"] = alerts.win.dt.strftime("%H:%M") + " - " + alerts.win_end.dt.strftime("%H:%M")
+alerts["threshold"] = ALERT_THRESHOLD          # single global threshold, same for every user/hour
+alerts["risk_score"] = alerts.risk.round(3)
+
+def verdict(row):
+    if row.is_attack:
+        steps = ",".join(str(s) for s in row.attack_steps)
+        return f"TRUE ALERT (attack step {steps})"
+    return "FALSE ALERT"
+
+alerts["verdict"] = alerts.apply(verdict, axis=1)
+
+cols = ["alert_datetime", "user", "window", "risk_score", "threshold", "risk_level", "verdict"]
+out = alerts[cols]
+
+n_tp = int(alerts.is_attack.sum())
+n_fp = len(alerts) - n_tp
+print(f"Total alerts at threshold {ALERT_THRESHOLD}: {len(alerts)}   (TP={n_tp}, FP={n_fp})\n")
+display(out)
+
 https://drive.google.com/file/d/1dEdUntS_RWdB_7GN6zu_XZVmgf9Ls9C4/view?usp=drivesdk
 
 # final.ipynb — Per-User, Per-Hour AD Behavioural Baseline & Risk Scoring
