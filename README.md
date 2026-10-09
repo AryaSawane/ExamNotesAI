@@ -1,3 +1,36 @@
+fp = TE[TE.alert & ~TE.is_attack].merge(W[["wid", "ext_fail_count"]], on="wid")
+beacon_ips = {"198.51.100.83", "198.51.100.164"}
+bwins = set(map(tuple, ev[ev.dst_ip.isin(beacon_ips)][["user", "win"]].drop_duplicates().to_numpy()))
+fp["beacon_traffic"] = [(u, w) in bwins for u, w in zip(fp.user, fp.win)]
+print("FP total:", len(fp), "| beacon traffic:", int(fp.beacon_traffic.sum()),
+      "| red herrings:", int(fp.is_red_herring.sum()))
+display(fp[~fp.beacon_traffic][["user", "win", "risk", "threshold", "s_nov", "s_act", "s_rare", "s_temp"]].round(3))
+
+fn = TE[~TE.alert & TE.is_attack]
+fn = fn.merge(CELLS[["user", "win", "steps"]], on=["user", "win"])
+fn["what"] = [", ".join(sorted(set(TL[(TL.actor == u) & (TL.ts.dt.floor(WINDOW) == w)].event_type))) for u, w in zip(fn.user, fn.win)]
+display(fn[["user", "win", "what", "event_count", "risk", "threshold", "s_nov", "s_act", "s_temp"]].round(3))
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
 # ---- list every alert at the operating threshold, with ground-truth verdict ---------
 alerts = ACTIVE[ACTIVE.risk >= ALERT_THRESHOLD].copy().sort_values("win").reset_index(drop=True)
 
