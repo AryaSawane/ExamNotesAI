@@ -1,3 +1,287 @@
+# Project: User Behavioral Anomaly Detection and Drift Monitoring Using Active Directory and Sysmon Logs
+
+## 1. Project Objective
+
+Develop a **User Behavioral Anomaly Detection Model** using Active Directory (AD) Security logs and Sysmon logs to identify potentially malicious or abnormal user activities by learning the normal behavior patterns of individual users over time.
+
+The model should establish a separate behavioral baseline for each user for each hour of the day. Incoming user activity should then be evaluated against the corresponding hourly baseline to generate an anomaly score or risk score that indicates how much the observed behavior deviates from the user's normal activity.
+
+The primary goal is to detect suspicious behavioral changes that may indicate compromised accounts, insider threats, unauthorized access, or other potentially malicious activities.
+
+## 2. Input Data
+
+The input will consist of one or more JSONL files containing AD Security logs and Sysmon events collected over approximately 10–15 days.
+
+Each record represents a security event and may contain fields such as:
+
+* Timestamp
+* Computer or hostname
+* Event ID
+* Username or account name
+* Logon ID
+* Process ID and Process GUID
+* Process name and command-line arguments
+* Parent process information
+* Source and destination IP addresses
+* Logon type
+* Authentication-related information
+* Network connection details
+* File, process, and other security event information
+
+The exact available fields must be determined by inspecting the input data. The model should use the fields that are actually present and avoid assuming that every event contains every field.
+
+## 3. Dataset Division
+
+Divide the data chronologically into two phases:
+
+**Phase 1: Baseline Training (First 7 Days)**
+
+The first seven days represent normal user activity. Use these logs to learn individual users' behavioral patterns.
+
+**Phase 2: Anomaly Detection and Evaluation (After Day 7)**
+
+The logs collected after the first seven days will be processed as new observations. These logs may contain both normal and malicious activities.
+
+The model must evaluate these observations against the baselines learned during the first seven days.
+
+Do not use post-training data to construct or update the initial baseline. This separation is essential to prevent data leakage during evaluation.
+
+## 4. Log Processing and Feature Extraction
+
+### Step 1: Preprocess the Logs
+
+* Load and validate the JSONL files.
+* Parse timestamps and normalize relevant fields.
+* Identify users consistently across AD Security and Sysmon events.
+* Handle missing values, duplicate records, malformed events, and inconsistent field formats.
+* Correlate related events where possible using fields such as username, Logon ID, Process GUID, process ID, hostname, and timestamp.
+* Ensure that the same user is not incorrectly assigned multiple identities because of differences in event formats.
+
+### Step 2: Divide Logs into 10-Minute Windows
+
+Split the entire timeline into consecutive, non-overlapping 10-minute windows.
+
+For each window, group the relevant events by user and extract a fixed-length feature vector describing that user's activity during that window.
+
+Each feature vector should represent the behavior of one user during one specific 10-minute interval.
+
+### Step 3: Extract Behavioral Features
+
+Extract meaningful numerical or encoded features from the available AD Security and Sysmon events. Potential features include:
+
+* Total number of events
+* Number and distribution of event IDs
+* Successful and failed logon counts
+* Number of distinct computers accessed
+* Number of distinct processes executed
+* Process execution frequency
+* Unusual process or parent-child process combinations
+* Command-line behavior
+* Network connection counts
+* Distinct destination IP addresses or ports
+* File activity counts, if available
+* Privileged logon or privilege-related activity, if available
+* Other features that capture user-specific behavior
+
+The final feature set must be based on the actual dataset and the security relevance of each field.
+
+Use consistent feature definitions during both baseline training and anomaly detection.
+
+## 5. User-Specific, Hour-of-Day Baseline Construction
+
+The central requirement is to create a **separate baseline for every user for every hour of the day**.
+
+Do not create a single global baseline for all users. Do not combine all hours into one baseline for a user.
+
+For example, a user should have separate baselines for:
+
+* 09:00–10:00
+* 10:00–11:00
+* 11:00–12:00
+* And so on.
+
+Different users may have different behavioral patterns during the same hour, and the same user may behave differently during different hours.
+
+### Window-Based Training Structure
+
+Each hour contains six consecutive 10-minute windows:
+
+| Window | Time interval   |
+| ------ | --------------- |
+| 1      | HH:00–HH:10     |
+| 2      | HH:10–HH:20     |
+| 3      | HH:20–HH:30     |
+| 4      | HH:30–HH:40     |
+| 5      | HH:40–HH:50     |
+| 6      | HH:50–(HH+1):00 |
+
+Across seven days, each user can have up to:
+
+**6 windows per hour × 7 days = 42 training windows per user per hour.**
+
+For example, the baseline for user A between 09:00 and 10:00 should be constructed from that user's corresponding 10-minute windows during that hour across the first seven days.
+
+Similarly, user A's 10:00–11:00 baseline should be built separately from that user's observations during that hour.
+
+User B must have their own baselines, independently of user A.
+
+### Handling Empty Windows
+
+Do not automatically discard windows in which a user has no observed activity.
+
+Represent empty windows using an appropriate zero-valued feature vector or another explicitly defined representation, depending on the feature semantics.
+
+Maintain a distinction between:
+
+* A genuine absence of activity.
+* Missing, incomplete, or unavailable telemetry.
+
+This prevents the model from learning misleading behavioral patterns.
+
+### Baseline Statistics
+
+For each user-hour combination, construct a representation of normal behavior from the training feature vectors.
+
+Possible approaches include:
+
+* Mean and standard deviation for numerical features.
+* Median and interquartile range for robust statistics.
+* Empirical distributions of event counts and activity patterns.
+* Statistical or machine-learning models trained on the user's hourly windows.
+
+Select an appropriate baseline method based on the available training data and the intended anomaly detection algorithm.
+
+Store the resulting baseline so it can be reused when new observations arrive.
+
+## 6. Anomaly Detection on Post-Training Logs
+
+After the initial seven-day training period, process the remaining logs using exactly the same preprocessing, windowing, identity mapping, and feature extraction pipeline.
+
+For every user and every 10-minute window:
+
+1. Identify the user.
+2. Determine the hour of the day in which the window occurs.
+3. Extract the corresponding feature vector.
+4. Retrieve that user's baseline for the relevant hour.
+5. Compare the observed feature vector against the baseline.
+6. Calculate an anomaly score or risk score.
+7. Classify or flag the window based on an appropriate threshold.
+
+For example, if user A generates activity between 09:00 and 09:10 on Day 10, evaluate that activity against user A's 09:00–10:00 baseline.
+
+Do not compare user A's activity against user B's baseline or against user A's baseline for a different hour.
+
+The model should identify deviations such as unusually high event volumes, abnormal authentication patterns, unfamiliar process activity, unusual network connections, or other meaningful changes relative to the user's historical behavior.
+
+## 7. Anomaly Scoring and Risk Classification
+
+The model should produce an anomaly score for each user-window pair.
+
+The score should represent the degree of deviation from the corresponding user-hour baseline.
+
+Where the selected algorithm supports it, normalize or calibrate the score to a consistent scale. If a probability is reported, ensure that it is genuinely calibrated or clearly label it as a score rather than a probability.
+
+The output should ideally include:
+
+* User identifier
+* Window start and end timestamps
+* Hour-of-day baseline used
+* Extracted feature values
+* Anomaly score
+* Risk category, such as Low, Medium, or High
+* Most influential anomalous features
+* A brief explanation of why the window was flagged
+
+Thresholds should be selected using a defensible approach, such as held-out normal observations, validation data, or an explicitly defined false-positive target.
+
+Do not assume that every anomalous observation is malicious. The model identifies unusual behavior that requires further investigation.
+
+## 8. Model Requirements
+
+The implementation should:
+
+* Learn separate baselines for each user and hour of the day.
+* Use the first seven days exclusively for initial baseline training.
+* Process logs in non-overlapping 10-minute windows.
+* Preserve windows with no activity using an appropriate representation.
+* Apply identical feature extraction to training and testing data.
+* Support users with different activity levels and behavioral patterns.
+* Handle new users or users with insufficient training observations explicitly.
+* Detect anomalous behavior without requiring every malicious event to be known in advance.
+* Avoid data leakage between training and evaluation.
+* Be computationally efficient for large JSONL files.
+* Keep the baseline and scoring pipeline reproducible.
+* Provide interpretable results that security analysts can investigate.
+
+Evaluate suitable unsupervised or semi-supervised anomaly detection methods rather than assuming a particular algorithm is best before inspecting the data. Candidate approaches may include robust statistical baselines, Isolation Forest, or other appropriate methods.
+
+## 9. Evaluation
+
+Evaluate the model using the post-training period while preserving chronological separation.
+
+If reliable attack labels or a ground-truth attack timeline are available, use them to assess detection performance.
+
+Useful evaluation metrics include:
+
+* Precision
+* Recall
+* F1-score
+* False-positive rate
+* Detection rate for known malicious windows
+* Time to detection
+* Performance by user and hour of day
+
+If ground-truth labels are unavailable, assess anomaly score distributions, review high-scoring windows, and estimate false-positive behavior using appropriate normal validation data.
+
+Do not claim that a high anomaly score proves malicious activity.
+
+## 10. Expected Output
+
+The project should produce:
+
+1. A cleaned and normalized dataset.
+2. A feature dataset containing one feature vector per user per 10-minute window.
+3. A baseline store containing separate baseline information for each user-hour combination.
+4. An anomaly detection pipeline for post-training logs.
+5. A scored output file, preferably CSV or JSONL, containing the anomaly score and risk category for each evaluated user-window.
+6. An explanation of the main features contributing to each flagged observation, where supported by the selected method.
+7. Evaluation metrics and visualizations.
+8. A documented, reproducible implementation suitable for future log ingestion.
+
+## 11. Important Design Considerations
+
+Before implementing the model, inspect the dataset and determine:
+
+* How users should be identified consistently across AD Security and Sysmon logs.
+* Whether the dataset contains sufficient observations for each user-hour baseline.
+* How missing telemetry differs from genuine inactivity.
+* Whether the model should treat each of the six 10-minute positions within an hour separately or aggregate all 42 windows into a single user-hour distribution.
+* Which anomaly detection algorithm best fits the feature representation and available sample size.
+* How to select thresholds and handle normal behavioral variation.
+
+The initial design should preserve the main requirement: **each user's incoming 10-minute activity must be evaluated against that same user's baseline for the corresponding hour of the day, learned exclusively from the first seven days.**
+
+## 12. Instructions to the AI Agent
+
+First, analyze the project requirements and inspect the actual dataset schema. Then propose a suitable architecture, feature extraction strategy, baseline representation, and anomaly detection algorithm.
+
+Explain the reasoning behind the proposed approach before implementing it. Identify potential limitations, especially the small number of training observations available for each user-hour combination.
+
+Implement the solution in clear, modular, well-documented Python code. Validate the chronological split, window generation, user mapping, feature consistency, and baseline lookup before evaluating the model.
+
+Do not silently change the 10-minute window size, seven-day training period, or user-specific hourly baseline requirement. If a modification is necessary, explain the reason and obtain approval before changing the design.
+Also u have to handel more things like attribution like how can u link that particular logs to an users because every enevt id in sysmon will not conatin username abd all the only common thjmg is processguid and u have also to links symon and security logs if both accoured in same window aslo the main thing is feature engineering i dont want just count of events and or unioqe count of some paraneter addionly there should be some smart features which can draow partern and reprenst the best possible behavior of thatvuse aslo see how to handel the some string feture like cmd ips et c and connection between them because a cmd never seen in baseline should produce high alert aslo see if an suere permporm somr rare events at 11 t0 12 pm and in testing they occur at off houres like 9 t0 10 am or in gours he doest perporm them in how to handel that and the manin thing evalustion a we are taking 10 min windows  of users the confusiknmatrix should be based on windows liked ti users not to each event if u are confident about yourself and clear about the idea start building an jupyter notebook
+
+
+
+
+
+
+
+
+
+
+
 fp = TE[TE.alert & ~TE.is_attack].merge(W[["wid", "ext_fail_count"]], on="wid")
 beacon_ips = {"198.51.100.83", "198.51.100.164"}
 bwins = set(map(tuple, ev[ev.dst_ip.isin(beacon_ips)][["user", "win"]].drop_duplicates().to_numpy()))
